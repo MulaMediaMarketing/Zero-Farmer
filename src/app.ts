@@ -130,7 +130,8 @@ export function createServer(runtime = createRuntime()) {
   app.setErrorHandler((error, _request, reply) => {
     if (error instanceof z.ZodError) return reply.code(400).send({ error: 'Validation failed', issues: error.issues });
     app.log.error(error);
-    return reply.code(500).send({ error: error.message });
+    const message = error instanceof Error ? error.message : 'Unexpected error';
+    return reply.code(500).send({ error: message });
   });
 
   return { app, runtime };
