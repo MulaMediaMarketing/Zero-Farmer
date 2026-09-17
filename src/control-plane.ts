@@ -57,10 +57,13 @@ export function registerControlPlane(app: FastifyInstance, runtime: ZeroFarmerRu
 
   app.get('/metrics', async (_request, reply) => {
     const fleet = runtime.fleet.snapshot();
+    const offline = Math.max(0, fleet.devices.total - fleet.devices.online - fleet.devices.busy - fleet.devices.degraded - fleet.devices.quarantined);
     metrics.set('zero_farmer_devices_total', fleet.devices.total);
     metrics.set('zero_farmer_devices_online', fleet.devices.online);
     metrics.set('zero_farmer_devices_busy', fleet.devices.busy);
-    metrics.set('zero_farmer_devices_offline', fleet.devices.offline);
+    metrics.set('zero_farmer_devices_degraded', fleet.devices.degraded);
+    metrics.set('zero_farmer_devices_quarantined', fleet.devices.quarantined);
+    metrics.set('zero_farmer_devices_offline', offline);
     metrics.set('zero_farmer_runs_total', fleet.runs.total);
     metrics.set('zero_farmer_runs_failed', fleet.runs.failed);
     reply.type('text/plain; version=0.0.4');
