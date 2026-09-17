@@ -1,5 +1,6 @@
 import Fastify from 'fastify';
 import { z } from 'zod';
+import { RuleWorkflowCompiler } from './intelligence.js';
 import {
   AgentMemory,
   AgentOrchestrator,
@@ -34,7 +35,7 @@ export function createRuntime(): ZeroFarmerRuntime {
   const recovery = new RecoveryEngine();
   const orchestrator = new AgentOrchestrator(devices, workflows, plugins, memory, replay, recovery);
   const fleet = new FleetIntelligence(devices, () => orchestrator.listRuns());
-  const naturalLanguage = new NaturalLanguageWorkflowService(undefined, workflows);
+  const naturalLanguage = new NaturalLanguageWorkflowService(new RuleWorkflowCompiler(), workflows);
 
   recovery.register({
     id: 'mark-degraded',
@@ -104,6 +105,11 @@ export function createServer(runtime = createRuntime()) {
       })).min(1),
     }).parse(request.body);
     return reply.code(201).send(runtime.workflows.save(body));
+  });
+
+  app.post('/api/v1/workflows/compile', async (request, reply) => {
+    const { prompt } = z.object({ prompt: z.string().min(1).max(4000) }).parse(request.body);
+    return reply.code(201).send(await runtime.naturalLanguage.create(prompt));
   });
 
   app.post('/api/v1/workflows/:id/runs', async (request, reply) => {
