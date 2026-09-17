@@ -1,6 +1,8 @@
 import Fastify from 'fastify';
 import { z } from 'zod';
 import { RuleWorkflowCompiler } from './intelligence.js';
+import { registerControlPlane } from './control-plane.js';
+import { registerDashboard } from './dashboard.js';
 import {
   AgentMemory,
   AgentOrchestrator,
@@ -72,6 +74,9 @@ export function createRuntime(): ZeroFarmerRuntime {
 
 export function createServer(runtime = createRuntime()) {
   const app = Fastify({ logger: true });
+  const apiKeys = (process.env.ZERO_FARMER_API_KEYS ?? '').split(',').map((value) => value.trim()).filter(Boolean);
+  const controlPlane = registerControlPlane(app, runtime, { apiKeys });
+  registerDashboard(app);
 
   app.get('/health', async () => ({ ok: true, service: 'zero-farmer' }));
   app.get('/api/v1/fleet', async () => runtime.fleet.snapshot());
@@ -90,6 +95,7 @@ export function createServer(runtime = createRuntime()) {
       health: z.enum(['online', 'busy', 'degraded', 'offline', 'quarantined']).default('online'), tags: z.array(z.string()).default([]),
     }).parse(request.body);
     const twin: DeviceTwin = runtime.devices.upsert(body);
+    controlPlane.events.publish('device.upserted', { deviceId: twin.id });
     return reply.code(201).send(twin);
   });
 
@@ -104,20 +110,27 @@ export function createServer(runtime = createRuntime()) {
         recoveryPolicy: z.string().optional(),
       })).min(1),
     }).parse(request.body);
-    return reply.code(201).send(runtime.workflows.save(body));
+    const workflow = runtime.workflows.save(body);
+    controlPlane.events.publish('workflow.saved', { workflowId: workflow.id, version: workflow.version });
+    return reply.code(201).send(workflow);
   });
 
   app.post('/api/v1/workflows/compile', async (request, reply) => {
     const { prompt } = z.object({ prompt: z.string().min(1).max(4000) }).parse(request.body);
-    return reply.code(201).send(await runtime.naturalLanguage.create(prompt));
+    const workflow = await runtime.naturalLanguage.create(prompt);
+    controlPlane.events.publish('workflow.compiled', { workflowId: workflow.id, version: workflow.version });
+    return reply.code(201).send(workflow);
   });
 
   app.post('/api/v1/workflows/:id/runs', async (request, reply) => {
     const params = z.object({ id: z.string() }).parse(request.params);
     const body = z.object({ version: z.number().int().positive().optional(), executeNow: z.boolean().default(true) }).parse(request.body ?? {});
     const run = runtime.orchestrator.enqueue(params.id, body.version);
+    controlPlane.events.publish('run.queued', { runId: run.id, workflowId: params.id });
     if (body.executeNow) await runtime.orchestrator.execute(run.id);
-    return reply.code(201).send(runtime.orchestrator.getRun(run.id));
+    const updated = runtime.orchestrator.getRun(run.id);
+    controlPlane.events.publish('run.updated', { runId: run.id, status: updated?.status });
+    return reply.code(201).send(updated);
   });
 
   app.get('/api/v1/runs/:id/replay', async (request, reply) => {
@@ -130,9 +143,10 @@ export function createServer(runtime = createRuntime()) {
   app.setErrorHandler((error, _request, reply) => {
     if (error instanceof z.ZodError) return reply.code(400).send({ error: 'Validation failed', issues: error.issues });
     app.log.error(error);
+    controlPlane.metrics.inc('zero_farmer_http_errors_total');
     const message = error instanceof Error ? error.message : 'Unexpected error';
     return reply.code(500).send({ error: message });
   });
 
-  return { app, runtime };
+  return { app, runtime, controlPlane };
 }
