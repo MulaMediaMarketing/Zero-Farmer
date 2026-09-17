@@ -2,6 +2,7 @@ import Fastify from 'fastify';
 import { z } from 'zod';
 import { RuleWorkflowCompiler } from './intelligence.js';
 import { registerControlPlane } from './control-plane.js';
+import { registerDashboard } from './dashboard.js';
 import {
   AgentMemory,
   AgentOrchestrator,
@@ -75,6 +76,7 @@ export function createServer(runtime = createRuntime()) {
   const app = Fastify({ logger: true });
   const apiKeys = (process.env.ZERO_FARMER_API_KEYS ?? '').split(',').map((value) => value.trim()).filter(Boolean);
   const controlPlane = registerControlPlane(app, runtime, { apiKeys });
+  registerDashboard(app);
 
   app.get('/health', async () => ({ ok: true, service: 'zero-farmer' }));
   app.get('/api/v1/fleet', async () => runtime.fleet.snapshot());
